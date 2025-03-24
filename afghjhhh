@@ -90,15 +90,15 @@ local function ExpandHitbox(target)
 
         -- Increase hitbox sizes (4x bigger)
         if humanoidRootPart then
-            humanoidRootPart.Size = humanoidRootPart.Size * 4 -- 400% larger
+            humanoidRootPart.Size = humanoidRootPart.Size * 90 -- 400% larger
             humanoidRootPart.Transparency = 1 -- Make invisible
         end
         if upperTorso then
-            upperTorso.Size = upperTorso.Size * 4
+            upperTorso.Size = upperTorso.Size * 90
             upperTorso.Transparency = 1 -- Make invisible
         end
         if head then
-            head.Size = head.Size * 4
+            head.Size = head.Size * 90
             head.Transparency = 1 -- Make invisible
         end
     end
@@ -218,5 +218,3 @@ RunService.RenderStepped:Connect(function()
         end
     end
 end)
-
-print("Invisible 4x Hitbox Aim Assist Loaded - Press T to toggle")
