@@ -1,0 +1,222 @@
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local Camera = game.Workspace.CurrentCamera
+
+local Target = nil
+local Aiming = false
+local Highlight = nil
+local originalCameraOffset = Vector3.new(0, 0, 0) -- Store original camera position
+local lockedCameraOffset = Vector3.new(0, 2, 0) -- How much to move camera up when locking
+
+local offsetY = -30 -- Moves aim slightly higher
+local smoothFactor = 0.2 -- Lower value = smoother movement
+local predictionStrength = 0.11 -- Adjusted for stability
+
+-- Store the original sizes and transparency of hitboxes
+local originalHitboxSizes = {}
+local originalHitboxTransparency = {}
+
+-- Function to create or update highlight
+local function CreateHighlight(target)
+    if Highlight then Highlight:Destroy() end
+    if target and target.Character and target.Character:FindFirstChild("Head") then
+        local Billboard = Instance.new("BillboardGui")
+        Billboard.Name = "EuphoriaTitle"
+        Billboard.Adornee = target.Character.Head
+        Billboard.Size = UDim2.new(4, 0, 1, 0)
+        Billboard.StudsOffset = Vector3.new(0, 2, 0)
+        Billboard.AlwaysOnTop = true
+        
+        local TextLabel = Instance.new("TextLabel")
+        TextLabel.Size = UDim2.new(1, 0, 1, 0)
+        TextLabel.BackgroundTransparency = 1
+        TextLabel.Text = "EUPHORIA"
+        TextLabel.TextColor3 = Color3.fromRGB(128, 0, 128)
+        TextLabel.TextStrokeTransparency = 0
+        TextLabel.TextScaled = true
+        TextLabel.Font = Enum.Font.GothamBold
+        
+        TextLabel.Parent = Billboard
+        Billboard.Parent = target.Character.Head
+
+        Highlight = Billboard
+    end
+end
+
+-- Function to get nearest player based on mouse position
+local function GetNearestPlayer()
+    local closestPlayer = nil
+    local shortestDistance = math.huge
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character:FindFirstChild("UpperTorso") then
+            local torsoPos = player.Character.UpperTorso.Position
+            local torsoScreenPos, onScreen = game.Workspace.CurrentCamera:WorldToViewportPoint(torsoPos)
+            
+            if onScreen then
+                local distance = (Vector2.new(torsoScreenPos.X, torsoScreenPos.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+                if distance < shortestDistance and distance < 250 then -- Extended range
+                    shortestDistance = distance
+                    closestPlayer = player
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+-- Function to expand hitbox of the target player and make it invisible
+local function ExpandHitbox(target)
+    if target and target.Character then
+        local humanoidRootPart = target.Character:FindFirstChild("HumanoidRootPart")
+        local upperTorso = target.Character:FindFirstChild("UpperTorso")
+        local head = target.Character:FindFirstChild("Head")
+
+        -- Save original sizes and transparency
+        originalHitboxSizes[target] = {
+            humanoidRootPartSize = humanoidRootPart.Size,
+            upperTorsoSize = upperTorso.Size,
+            headSize = head.Size,
+        }
+
+        originalHitboxTransparency[target] = {
+            humanoidRootPartTransparency = humanoidRootPart.Transparency,
+            upperTorsoTransparency = upperTorso.Transparency,
+            headTransparency = head.Transparency,
+        }
+
+        -- Increase hitbox sizes (4x bigger)
+        if humanoidRootPart then
+            humanoidRootPart.Size = humanoidRootPart.Size * 4 -- 400% larger
+            humanoidRootPart.Transparency = 1 -- Make invisible
+        end
+        if upperTorso then
+            upperTorso.Size = upperTorso.Size * 4
+            upperTorso.Transparency = 1 -- Make invisible
+        end
+        if head then
+            head.Size = head.Size * 4
+            head.Transparency = 1 -- Make invisible
+        end
+    end
+end
+
+-- Function to revert hitbox sizes and transparency back to original
+local function RevertHitbox(target)
+    if target and target.Character then
+        local humanoidRootPart = target.Character:FindFirstChild("HumanoidRootPart")
+        local upperTorso = target.Character:FindFirstChild("UpperTorso")
+        local head = target.Character:FindFirstChild("Head")
+
+        -- Revert to original sizes and transparency
+        if originalHitboxSizes[target] then
+            if humanoidRootPart then
+                humanoidRootPart.Size = originalHitboxSizes[target].humanoidRootPartSize
+                humanoidRootPart.Transparency = originalHitboxTransparency[target].humanoidRootPartTransparency
+            end
+            if upperTorso then
+                upperTorso.Size = originalHitboxSizes[target].upperTorsoSize
+                upperTorso.Transparency = originalHitboxTransparency[target].upperTorsoTransparency
+            end
+            if head then
+                head.Size = originalHitboxSizes[target].headSize
+                head.Transparency = originalHitboxTransparency[target].headTransparency
+            end
+        end
+    end
+end
+
+-- Predict target movement and adjust aim
+local function GetPredictedPosition(target)
+    if target and target.Character and target.Character:FindFirstChild("UpperTorso") and target.Character:FindFirstChild("HumanoidRootPart") then
+        local rootPart = target.Character.HumanoidRootPart
+        local velocity = rootPart.Velocity * predictionStrength
+
+        -- Predict where the target will be
+        return rootPart.Position + velocity
+    end
+    return nil
+end
+
+-- Smoothly lock mouse to predicted target's position
+local function LockMouseToTarget()
+    if Target then
+        local predictedPos = GetPredictedPosition(Target)
+        if predictedPos then
+            local screenPos, onScreen = game.Workspace.CurrentCamera:WorldToViewportPoint(predictedPos)
+            
+            if onScreen then
+                local targetX = screenPos.X
+                local targetY = screenPos.Y + offsetY
+
+                -- Smoother movement for lock-on
+                local moveX = (targetX - Mouse.X) * smoothFactor
+                local moveY = (targetY - Mouse.Y) * smoothFactor
+                
+                -- Apply mouse movement in small increments
+                mousemoverel(moveX, moveY)
+            end
+        end
+    end
+end
+
+-- Function to move the camera up when locking onto a target
+local function AdjustCamera(up)
+    if up then
+        Camera.CFrame = Camera.CFrame * CFrame.new(lockedCameraOffset) -- Move camera up
+    else
+        Camera.CFrame = Camera.CFrame * CFrame.new(-lockedCameraOffset) -- Reset camera position
+    end
+end
+
+-- Toggle Aim Assist
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.T then
+        if Aiming then
+            -- Disable Aiming
+            Aiming = false
+            AdjustCamera(false) -- Move camera back down
+            RevertHitbox(Target) -- Revert hitbox sizes
+            Target = nil
+            if Highlight then
+                Highlight:Destroy()
+                Highlight = nil
+            end
+            print("Target Released")
+        else
+            -- Enable Aiming
+            Aiming = true
+            Target = GetNearestPlayer()
+            if Target then
+                print("Target Locked:", Target.Name)
+                CreateHighlight(Target)
+                AdjustCamera(true) -- Move camera up
+                ExpandHitbox(Target) -- Expand and make hitboxes invisible
+            end
+        end
+    end
+end)
+
+-- Update aim every frame
+RunService.RenderStepped:Connect(function()
+    if Aiming and Target then
+        LockMouseToTarget()
+        
+        -- If target is invalid, reset aiming
+        if not Target.Character or not Target.Character:FindFirstChild("Humanoid") or Target.Character.Humanoid.Health <= 0 then
+            print("Target Lost")
+            AdjustCamera(false) -- Move camera back down
+            RevertHitbox(Target) -- Revert hitbox sizes
+            Target = nil
+            if Highlight then
+                Highlight:Destroy()
+                Highlight = nil
+            end
+        end
+    end
+end)
+
+print("Invisible 4x Hitbox Aim Assist Loaded - Press T to toggle")
